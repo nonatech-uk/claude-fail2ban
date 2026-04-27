@@ -15,8 +15,9 @@ A multi-host log analyser. Each host runs `python -m claude_fail2ban` every 15 m
   - `prompts.py` — single shared `SYSTEM_PROMPT`
   - `log.py` — JSON-line stdout logger (NOT Python `logging`); always write events with `log.emit("EVENT_NAME", **fields)`
   - `state.py`, `geoip.py`, `whitelist.py`, `health.py`, `email_alert.py`, `digest.py` — leaf utilities
-  - `sources/` — `Source` ABC + `caddy_json.py`. Add `mailcow_journald.py`, `mailcow_nginx.py` for Phase 4.
-  - `actions/` — `Action` ABC + `fail2ban_client.py`. Add `mailcow_api.py` for Phase 4.
+  - `patterns.py` — shared suspicion regex (`BAD_PATH_PATTERNS`, `SUSPICIOUS_STATUSES`, `SUSPICIOUS_METHODS`). Both nginx-flavoured sources import from here.
+  - `sources/` — `Source` ABC + `caddy_json.py`, `mailcow_docker.py` (postfix/dovecot/rspamd via `docker logs --since`), `mailcow_nginx.py`. The shared `_docker_logs.py` helper handles cursor management.
+  - `actions/` — `Action` ABC + `fail2ban_client.py`, `mailcow_api.py`.
   - `providers/` — `LLMProvider` ABC + `anthropic_provider.py`, `ollama_openai.py`, `ollama_native.py`.
 - `systemd/` — units copied to `/etc/systemd/system/` by `install.sh`
 - `examples/` — per-role `config.*.toml` templates
@@ -66,13 +67,14 @@ There's no formal test suite yet. Validation flow:
 | 1.5 | Shadow-mode validation: run Qwen alongside Anthropic for ~3 days, compare verdicts | Done on mees-app-server, baking |
 | 2 | GitHub repo + per-host config via fleet-sync | In progress (this repo) |
 | 3 | Roll out to albury-app-server | Pending |
-| 4 | Mailcow source (`mailcow_journald.py`, `mailcow_nginx.py`) + ban backend (`mailcow_api.py`); roll out to mees-mail-server | Pending |
+| 4 | Mailcow source (`mailcow_docker.py`, `mailcow_nginx.py`) + ban backend (`mailcow_api.py`); roll out to mees-mail-server | In progress |
 | 5 | Roll out to albury-mail-server | Pending |
 | 6 | Central reporter — daily Loki-driven cross-host digest | Pending |
 
 ## Things that bit me last time
 
-- **Negative state offsets** crash `f.seek()`. `caddy_json.py` clamps; do the same in any new source.
+- **Negative state offsets** crash `f.seek()`. `caddy_json.py` clamps; the docker-logs helper (`sources/_docker_logs.py`) clamps RFC3339 cursors the same way (negative / future / >24h-old all fall back to a 16-minute look-back).
+- **Mailcow docker logs are NOT in journald** on stock installs. The docker daemon uses the `json-file` log driver, so `journalctl _SYSTEMD_UNIT=mailcowdockerized-…` is empty. `mailcow_docker.py` shells out to `docker logs --since=<rfc3339>` instead. If a future host changes the daemon log driver to journald, that's the time to write a sibling source.
 - **Reasoning models eat tokens silently.** Qwen3 family generates a `reasoning` field on Ollama's OpenAI-compat endpoint that doesn't count as `completion_tokens` but blocks for 30+ seconds. Use the native `/api/chat` endpoint with `think: false` (`ollama_native.py`).
 - **fleet-sync clobbers file modes.** Any per-host config delivered via fleet-sync needs `chmod 0644` in the manifest's `reload:` line. See `feedback_fleet_sync_perms` in memory.
 - **`/opt/caddy-claude-analysis/` is the OLD deployment.** Read it for reference if you need to compare behaviour, but don't edit it. Once Phase 1.5 is signed off, archive it.

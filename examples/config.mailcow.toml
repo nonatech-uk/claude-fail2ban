@@ -1,31 +1,38 @@
 # Mailcow host config (e.g. mees-mail-server, albury-mail-server).
-# Reads container journald units (postfix, dovecot, nginx), bans via the
-# mailcow REST API. Runs *alongside* mailcow's built-in fail2ban — that
-# handles threshold-based bans; we add slow/distributed/multi-vector cases.
+# Reads container logs from the mailcow docker-compose stack via
+# `docker logs --since` (mailcow uses the default json-file log driver).
+# Bans via the mailcow REST API. Runs *alongside* mailcow's built-in
+# fail2ban — that handles threshold-based bans; we add slow / distributed
+# / multi-vector cases.
+#
+# Confirm exact container names on the host:
+#   docker ps --format '{{.Names}}' | grep mailcowdockerized
 
 host_role = "mailcow"
 mode = "warn"   # start in warn for ~24h, then flip to enforce
 
-# Sources — confirm exact unit names on the host:
-#   systemctl list-units 'mailcow*'
 [[sources]]
-type = "mailcow_journald"
+type = "mailcow_docker"
 flavour = "postfix"
-unit = "mailcowdockerized-postfix-mailcow.service"
+container = "mailcowdockerized-postfix-mailcow-1"
 
 [[sources]]
-type = "mailcow_journald"
+type = "mailcow_docker"
 flavour = "dovecot"
-unit = "mailcowdockerized-dovecot-mailcow.service"
+container = "mailcowdockerized-dovecot-mailcow-1"
 
 [[sources]]
 type = "mailcow_nginx"
-unit = "mailcowdockerized-nginx-mailcow.service"
+container = "mailcowdockerized-nginx-mailcow-1"
 
 [action]
 type = "mailcow_api"
 url_env = "MAILCOW_API_URL"
 key_env = "MAILCOW_API_KEY"
+# Set false when MAILCOW_API_URL is https://127.0.0.1 (the cert is for the
+# public hostname, not the loopback). Mailcow's UI lockdown often forces
+# the loopback path.
+tls_verify = false
 
 [[providers]]
 type = "anthropic"

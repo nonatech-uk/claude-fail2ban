@@ -12,12 +12,15 @@ from pathlib import Path
 
 from .actions.base import Action
 from .actions.fail2ban_client import Fail2banClientAction
+from .actions.mailcow_api import MailcowApiAction
 from .providers.anthropic_provider import AnthropicProvider
 from .providers.base import LLMProvider, ProviderError
 from .providers.ollama_native import OllamaNativeProvider
 from .providers.ollama_openai import OllamaOpenAIProvider
 from .sources.base import Source
 from .sources.caddy_json import CaddyJsonSource
+from .sources.mailcow_docker import MailcowDockerSource
+from .sources.mailcow_nginx import MailcowNginxSource
 
 DEFAULT_CONFIG_PATH = Path("/etc/claude-fail2ban/config.toml")
 
@@ -117,6 +120,10 @@ def _build_source(spec: dict) -> Source:
     typ = spec.get("type")
     if typ == "caddy_json":
         return CaddyJsonSource(log_dir=spec["log_dir"])
+    if typ == "mailcow_docker":
+        return MailcowDockerSource(container=spec["container"], flavour=spec["flavour"])
+    if typ == "mailcow_nginx":
+        return MailcowNginxSource(container=spec["container"])
     raise ValueError(f"unknown source type: {typ}")
 
 
@@ -124,6 +131,12 @@ def _build_action(spec: dict) -> Action:
     typ = spec.get("type")
     if typ == "fail2ban_client":
         return Fail2banClientAction(jail=spec["jail"])
+    if typ == "mailcow_api":
+        return MailcowApiAction(
+            url_env=spec.get("url_env", "MAILCOW_API_URL"),
+            key_env=spec.get("key_env", "MAILCOW_API_KEY"),
+            tls_verify=bool(spec.get("tls_verify", True)),
+        )
     raise ValueError(f"unknown action type: {typ}")
 
 

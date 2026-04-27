@@ -17,43 +17,58 @@ claude_fail2ban/           # the Python package
   cli.py                   # argparse + run loop
   analyzer.py              # provider chain + shadow comparison
   config.py                # TOML loader → builds source/action/provider instances
+  patterns.py              # shared BAD_PATH_PATTERNS / SUSPICIOUS_STATUSES / SUSPICIOUS_METHODS
   prompts.py               # SYSTEM_PROMPT
   log.py                   # JSON-line stdout logger (use log.emit("EVENT", **fields))
   state.py geoip.py whitelist.py health.py email_alert.py digest.py
   sources/
     base.py caddy_json.py
-    # mailcow_journald.py and mailcow_nginx.py do NOT exist yet — build them
+    _docker_logs.py        # shared `docker logs --since` reader with cursor mgmt
+    mailcow_docker.py      # postfix / dovecot / rspamd flavours
+    mailcow_nginx.py       # combined-log-format access log parser
   actions/
     base.py fail2ban_client.py
-    # mailcow_api.py does NOT exist yet — build it
+    mailcow_api.py         # POST /api/v1/edit/fail2ban via X-API-Key
   providers/
     base.py anthropic_provider.py ollama_openai.py ollama_native.py
 systemd/                   # service + timer units
 examples/
   config.caddy.toml        # template for caddy hosts
-  config.mailcow.toml      # template for THIS host — already partially fleshed out
+  config.mailcow.toml      # template for THIS host — uses mailcow_docker source type
   whitelist.txt            # placeholder, deliver real one separately
 install.sh                 # idempotent installer (copies package → /opt/claude-fail2ban)
 README.md                  # operator-facing docs
 CLAUDE.md                  # repo-level briefing for Claude (read it!)
 ```
 
+> Note: the original handoff named the source `mailcow_journald.py` on the
+> assumption mailcow's docker-compose stack would ship to journald. On
+> mees-mail-server the docker daemon uses the default `json-file` log
+> driver, so the source is named `mailcow_docker.py` and reads via
+> `docker logs --since`. If a host changes the docker daemon log driver,
+> a sibling `mailcow_journald.py` can be added.
+
 ## Phase 0 checks BEFORE writing code
 
 Verify on this host:
 
-1. **Mailcow systemd unit names.** They're in `examples/config.mailcow.toml` as guesses (`mailcowdockerized-postfix-mailcow.service` etc.). Confirm the actual names:
+1. **Mailcow container names.** docker-compose names are
+   `mailcowdockerized-{postfix,dovecot,nginx}-mailcow-1` on stock installs
+   (note the trailing `-1` and that mailcow uses `json-file` logging, not
+   journald). Confirm:
    ```sh
-   systemctl list-units 'mailcow*' 'docker-compose*' --no-pager
+   docker ps --format '{{.Names}}' | grep mailcowdockerized
    ```
-   If they differ, update the config and the `unit=` strings in your new sources.
+   If they differ, update `container = "..."` in
+   `examples/config.mailcow.toml`.
 
-2. **Mailcow nginx log format.** Look at a few recent lines:
+2. **Mailcow nginx log format.** Look at recent lines:
    ```sh
-   journalctl -u <nginx-unit> -n 5
+   docker logs --tail=5 mailcowdockerized-nginx-mailcow-1
    ```
-   - If JSON: parse with `json.loads`, fields like `request`, `status`, `remote_addr`, `http_user_agent`, `request_time`.
-   - If combined log format: regex parse. Reuse the path patterns from `claude_fail2ban/sources/caddy_json.py` (`BAD_PATH_PATTERNS`).
+   On mees-mail-server the format is **combined log format**, parsed by
+   the regex in `claude_fail2ban/sources/mailcow_nginx.py`. Path
+   suspicion shares `BAD_PATH_PATTERNS` from `claude_fail2ban/patterns.py`.
 
 3. **Alloy presence.** This host should be shipping journald to Loki at `http://10.8.0.1:3100`:
    ```sh
