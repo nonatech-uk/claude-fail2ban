@@ -150,17 +150,27 @@ sudo $EDITOR /etc/claude-fail2ban/config.toml
 # - Confirm the three [[sources]] unit= strings
 # - Confirm `[digest].sender` hostname
 
-# Stage secrets — get keys from the user out-of-band
+# Stage secrets — get keys from the user out-of-band.
+# QWEN_URL goes via mees-app-server (10.128.0.2:8442) — that host has a
+# DNAT/MASQUERADE rule forwarding to nas (10.8.0.1:8442) over WireGuard.
+# Mail hosts on the Hetzner private network can't reach 10.8.0.1 directly.
 sudo install -m 0700 -d /etc/claude-fail2ban
 sudo tee /etc/claude-fail2ban/.env >/dev/null <<'EOF'
 ANTHROPIC_API_KEY=sk-ant-host-specific-key
 HEALTHCHECK_URL=https://hc-ping.com/<uuid>
-QWEN_URL=https://10.8.0.1:8442
-QWEN_TOKEN=<host-specific-bearer>
+QWEN_URL=https://10.128.0.2:8442
+QWEN_TOKEN=<bearer-from-user>
 MAILCOW_API_URL=https://mail.mees.st        # confirm exact URL with the user
 MAILCOW_API_KEY=<read-write-mailcow-api-key>
 EOF
 sudo chmod 600 /etc/claude-fail2ban/.env
+
+# Note on the QWEN forwarder: traffic from this host arrives at nas as if
+# it came from mees-app-server's WireGuard IP (10.8.0.22) thanks to the
+# MASQUERADE. Caddy's source-IP allowlist on nas needs to accept 10.8.0.22
+# for any token presented through the forwarder — i.e. the source-IP gate
+# becomes effectively shared between mees-app-server and any host using
+# this forwarder. The bearer token is the authoritative auth.
 
 # Stage GeoIP DB (one-time, copy from mees-app-server)
 # scp mees-app-server:/var/lib/claude-fail2ban/GeoLite2-Country.mmdb /tmp/
