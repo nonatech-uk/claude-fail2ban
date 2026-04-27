@@ -1,0 +1,4 @@
+anthropic>=0.95
+geoip2>=5.0
+python-dotenv>=1.0
+requests>=2.32

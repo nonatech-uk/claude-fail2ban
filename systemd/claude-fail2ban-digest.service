@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude-fail2ban daily digest email
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/claude-fail2ban/.env
+WorkingDirectory=/opt/claude-fail2ban
+ExecStart=/opt/claude-fail2ban/.venv/bin/python -m claude_fail2ban --config /etc/claude-fail2ban/config.toml --send-digest
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-fail2ban
+User=root
+TimeoutStartSec=30

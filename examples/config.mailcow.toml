@@ -1,0 +1,60 @@
+# Mailcow host config (e.g. mees-mail-server, albury-mail-server).
+# Reads container journald units (postfix, dovecot, nginx), bans via the
+# mailcow REST API. Runs *alongside* mailcow's built-in fail2ban — that
+# handles threshold-based bans; we add slow/distributed/multi-vector cases.
+
+host_role = "mailcow"
+mode = "warn"   # start in warn for ~24h, then flip to enforce
+
+# Sources — confirm exact unit names on the host:
+#   systemctl list-units 'mailcow*'
+[[sources]]
+type = "mailcow_journald"
+flavour = "postfix"
+unit = "mailcowdockerized-postfix-mailcow.service"
+
+[[sources]]
+type = "mailcow_journald"
+flavour = "dovecot"
+unit = "mailcowdockerized-dovecot-mailcow.service"
+
+[[sources]]
+type = "mailcow_nginx"
+unit = "mailcowdockerized-nginx-mailcow.service"
+
+[action]
+type = "mailcow_api"
+url_env = "MAILCOW_API_URL"
+key_env = "MAILCOW_API_KEY"
+
+[[providers]]
+type = "anthropic"
+model = "claude-haiku-4-5-20251001"
+timeout_seconds = 60
+
+[[providers]]
+type = "ollama_native"
+url_env = "QWEN_URL"
+token_env = "QWEN_TOKEN"
+model = "qwen3.6:35b-a3b"
+think = false
+timeout_seconds = 90
+tls_verify = false
+
+[limits]
+max_bans_per_run = 10
+max_batch_size = 200
+
+[digest]
+enabled = true
+email = "stu@mees.st"
+sender = "claude-fail2ban@HOSTNAME"
+
+[paths]
+state_file = "/var/lib/claude-fail2ban/state.json"
+digest_file = "/var/lib/claude-fail2ban/daily-digest.json"
+whitelist_file = "/etc/claude-fail2ban/whitelist.txt"
+
+[shadow]
+enabled = true
+provider_index = 1

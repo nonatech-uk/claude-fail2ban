@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude-fail2ban analyser
+After=network.target fail2ban.service
+Wants=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/claude-fail2ban/.env
+WorkingDirectory=/opt/claude-fail2ban
+ExecStart=/opt/claude-fail2ban/.venv/bin/python -m claude_fail2ban --config /etc/claude-fail2ban/config.toml
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-fail2ban
+User=root
+TimeoutStartSec=600

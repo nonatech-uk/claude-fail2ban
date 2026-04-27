@@ -1,0 +1,50 @@
+# Caddy host config (e.g. mees-app-server, albury-app-server).
+# Reads Caddy JSON access logs, bans via fail2ban-client on a vanilla jail.
+
+host_role = "caddy"
+mode = "enforce"   # warn | enforce | dry-run
+
+[[sources]]
+type = "caddy_json"
+log_dir = "/docker/caddy/logs"
+
+[action]
+type = "fail2ban_client"
+jail = "caddy-claude"
+
+# Provider chain: ordered, first parseable result wins.
+# Initial cutover: Anthropic primary (zero behaviour change vs old script);
+# add Qwen as fallback. After Phase 1.5 shadow validation, swap order.
+[[providers]]
+type = "anthropic"
+model = "claude-haiku-4-5-20251001"
+timeout_seconds = 60
+
+[[providers]]
+type = "ollama_native"
+url_env = "QWEN_URL"
+token_env = "QWEN_TOKEN"
+model = "qwen3.6:35b-a3b"
+think = false
+timeout_seconds = 90
+tls_verify = false
+
+[limits]
+max_bans_per_run = 10
+max_batch_size = 200
+
+[digest]
+enabled = true
+email = "stu@mees.st"
+sender = "claude-fail2ban@HOSTNAME"   # replace with real hostname per host
+
+[paths]
+state_file = "/var/lib/claude-fail2ban/state.json"
+digest_file = "/var/lib/claude-fail2ban/daily-digest.json"
+whitelist_file = "/etc/claude-fail2ban/whitelist.txt"
+
+# Phase 1.5: enable shadow comparison. Disable once Qwen quality is proven
+# and you've swapped provider order so Qwen drives bans directly.
+[shadow]
+enabled = true
+provider_index = 1
