@@ -161,14 +161,18 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
         suspicious = suspicious[: cfg.limits.max_batch_size]
 
     rep_by_ip: dict[str, dict] = {}
-    if cfg.host_role == "caddy":
+    if cfg.host_role in {"caddy", "mailcow"}:
         lines_by_ip: dict[str, list[dict]] = {}
         for s in suspicious:
             lines_by_ip.setdefault(s.get("client_ip", "?"), []).append(s)
         for ip_, lines in lines_by_ip.items():
+            # `flavour` is mail-flow only; `status`/`method`/`ua_family` are
+            # nginx/web-only. `_modal_first_seen` returns None when no line
+            # carries the field, so it's safe to collect the union.
             rep_by_ip[ip_] = {
                 "target_site": _modal_first_seen(ln.get("target_site") for ln in lines),
                 "target_path": _modal_first_seen(ln.get("target_path") for ln in lines),
+                "flavour":     _modal_first_seen(ln.get("flavour")     for ln in lines),
                 "method":      _modal_first_seen(ln.get("method")      for ln in lines),
                 "status":      _modal_first_seen(ln.get("status")      for ln in lines),
                 "ua_family":   _modal_first_seen(ln.get("ua_family")   for ln in lines),
@@ -247,7 +251,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
     ip_targets: dict[str, list[str]] = {}
     for entry in suspicious:
         ip = entry.get("client_ip", "?")
-        target = f"{entry.get('host', '?')}{entry.get('uri', '?')}"
+        target = _format_target(entry)
         ip_targets.setdefault(ip, [])
         if target not in ip_targets[ip]:
             ip_targets[ip].append(target)
@@ -265,6 +269,26 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
     )
     health.ping()
     return 0
+
+
+def _format_target(entry: dict) -> str:
+    """Render an entry's target_site/target_path pair for the daily digest.
+
+    Mail sources (postfix/dovecot/rspamd) carry a recipient mailbox split
+    into local-part (target_path) and domain (target_site); render as
+    `local@domain`. Web sources carry a vhost + path; render as
+    `site + path`. Either field may be "unknown" — if both are unknown the
+    target collapses to a single "unknown" rather than e.g. "unknown@unknown".
+    """
+    site = entry.get("target_site") or "unknown"
+    path = entry.get("target_path") or "unknown"
+    if site == "unknown" and path == "unknown":
+        return "unknown"
+    source = entry.get("_source", "")
+    is_mail_flow = source in {"mailcow_postfix", "mailcow_dovecot", "mailcow_rspamd"}
+    if is_mail_flow:
+        return f"{path}@{site}"
+    return f"{site}{path}"
 
 
 if __name__ == "__main__":
