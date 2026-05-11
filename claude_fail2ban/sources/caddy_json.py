@@ -8,10 +8,55 @@ simplified entries.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
-from ..patterns import BAD_PATH_PATTERNS, SUSPICIOUS_METHODS, SUSPICIOUS_STATUSES
 from .base import Source
+
+BAD_PATH_PATTERNS = re.compile(
+    r"(?i)"
+    r"(\.env|\.git|\.aws|\.ssh|\.docker|\.kube"
+    r"|wp-login\.php|xmlrpc\.php|wp-admin"
+    r"|phpMyAdmin|phpmyadmin|pma|adminer"
+    r"|/actuator|/solr|/jenkins|/manager"
+    r"|/shell|/cmd|/eval|/exec"
+    r"|/etc/passwd|/proc/self"
+    r"|\.\./"
+    r"|<script|SELECT\s|UNION\s|OR\s1=1"
+    r"|/vendor/phpunit|/cgi-bin|/debug|/console"
+    r"|/config\.php|/info\.php|/test\.php"
+    r"|/backup|\.sql|\.bak|\.old|\.orig"
+    r"|/api/v1/pods|/\.well-known/security)"
+)
+
+SUSPICIOUS_STATUSES = {400, 401, 403, 405, 406, 408, 411, 413, 414, 429, 444, 500, 502, 503}
+SUSPICIOUS_METHODS = {"CONNECT", "TRACE", "DEBUG", "PROPFIND", "PATCH", "DELETE", "PUT", "TRACK"}
+
+
+def ua_family(ua: str | None) -> str:
+    """Collapse a User-Agent string into a coarse family.
+
+    Order is load-bearing: Googlebot's UA contains both ``Mozilla/`` and
+    ``bot``, so the bot check must come before the browser check.
+    """
+    if not ua or ua == "-":
+        return "none"
+    s = ua.lower()
+    if "python-requests" in s or "python-urllib" in s or "python/" in s:
+        return "python"
+    if "curl/" in s:
+        return "curl"
+    if "wget/" in s:
+        return "wget"
+    if "go-http-client" in s:
+        return "go"
+    if "wordpress/" in s or "xmlrpc" in s:
+        return "wordpress-ua"
+    if "bot" in s or "crawler" in s or "spider" in s or "slurp" in s:
+        return "bot"
+    if "mozilla/" in s or "chrome/" in s or "safari/" in s or "firefox/" in s:
+        return "browser"
+    return "other"
 
 
 class CaddyJsonSource(Source):
@@ -79,14 +124,24 @@ class CaddyJsonSource(Source):
         request = entry.get("request", {})
         headers = request.get("headers", {})
         ua_list = headers.get("User-Agent", headers.get("user-agent", []))
+        user_agent = ua_list[0] if ua_list else ""
+        host = request.get("host", "?")
+        uri = request.get("uri", "?")
+        method = (request.get("method", "?") or "?").upper()
+        status = entry.get("status", 0)
+        target_site = (host or "").split(":", 1)[0].lower() or None
+        target_path = (uri or "").split("?", 1)[0][:200] or None
         return {
             "ts": entry.get("ts", 0),
             "client_ip": _extract_client_ip(entry),
-            "method": request.get("method", "?"),
-            "host": request.get("host", "?"),
-            "uri": request.get("uri", "?"),
-            "status": entry.get("status", 0),
-            "user_agent": ua_list[0] if ua_list else "",
+            "method": method,
+            "host": host,
+            "uri": uri,
+            "status": status,
+            "user_agent": user_agent,
+            "target_site": target_site,
+            "target_path": target_path,
+            "ua_family": ua_family(user_agent),
         }
 
 

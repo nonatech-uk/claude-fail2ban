@@ -35,6 +35,7 @@ class OllamaNativeProvider(LLMProvider):
         tls_verify: bool = True,
         think: bool = False,
         max_tokens: int = 4096,
+        prompt_suffix: str = "",
     ):
         self.model = model
         url = os.environ.get(url_env, "").rstrip("/")
@@ -46,16 +47,18 @@ class OllamaNativeProvider(LLMProvider):
         self.verify = tls_verify
         self.think = think
         self.max_tokens = max_tokens
+        self.prompt_suffix = prompt_suffix
 
     def classify(self, system_prompt: str, user_message: str) -> ProviderResult:
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
 
+        full_system = system_prompt + self.prompt_suffix if self.prompt_suffix else system_prompt
         body = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": full_system},
                 {"role": "user", "content": user_message},
             ],
             "format": "json",

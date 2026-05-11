@@ -7,10 +7,26 @@ every call attempt and every fallback.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 
-from . import log
+from . import geoip, log
 from .providers.base import LLMProvider, ProviderError
+
+
+def _ip_subnet(ip: str) -> str:
+    """Return the /24 (IPv4) or /64 (IPv6) network containing ip.
+
+    Falls through unchanged on anything that doesn't parse as an IP — keeps
+    the "unknown" sentinel and any malformed values in their own buckets
+    rather than crashing the analyser.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    prefix = 24 if isinstance(addr, ipaddress.IPv4Address) else 64
+    return str(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
 
 
 def build_user_message(suspicious: list[dict]) -> tuple[str, dict[str, list[dict]]]:
@@ -19,17 +35,27 @@ def build_user_message(suspicious: list[dict]) -> tuple[str, dict[str, list[dict
         ip = entry.get("client_ip", "unknown")
         by_ip.setdefault(ip, []).append(entry)
 
+    by_subnet: dict[str, list[str]] = {}
+    for ip in by_ip:
+        by_subnet.setdefault(_ip_subnet(ip), []).append(ip)
+
     msg = (
         f"Analyze these {len(suspicious)} suspicious log entries "
         f"from {len(by_ip)} unique IPs in the last analysis window:\n\n"
     )
-    for ip, entries in sorted(by_ip.items()):
-        msg += f"--- IP: {ip} ({len(entries)} requests) ---\n"
-        for e in entries[:20]:
-            msg += json.dumps(e) + "\n"
-        if len(entries) > 20:
-            msg += f"... and {len(entries) - 20} more requests\n"
-        msg += "\n"
+    for subnet in sorted(by_subnet):
+        ips = by_subnet[subnet]
+        if len(ips) > 1:
+            msg += f"### Cluster {subnet} — {len(ips)} sibling IPs:\n\n"
+        for ip in sorted(ips):
+            entries = by_ip[ip]
+            country = geoip.lookup_country(ip) if ip != "unknown" else "Unknown"
+            msg += f"--- IP: {ip} [{country}] ({len(entries)} requests) ---\n"
+            for e in entries[:20]:
+                msg += json.dumps(e) + "\n"
+            if len(entries) > 20:
+                msg += f"... and {len(entries) - 20} more requests\n"
+            msg += "\n"
     return msg, by_ip
 
 

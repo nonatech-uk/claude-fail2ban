@@ -11,11 +11,29 @@ import argparse
 import os
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from . import analyzer, config as cfgmod, digest, geoip, health, log, prompts, state, whitelist
+
+
+def _modal_first_seen(values):
+    """Return the most-frequent value; ties broken by first-seen order."""
+    counts: Counter = Counter()
+    order: list = []
+    for v in values:
+        if v not in counts:
+            order.append(v)
+        counts[v] += 1
+    if not counts:
+        return None
+    top = max(counts.values())
+    for v in order:
+        if counts[v] == top:
+            return v
+    return None
 
 DEFAULT_ENV_PATHS = [
     Path("/etc/claude-fail2ban/.env"),
@@ -142,6 +160,20 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
         log.warn("BATCH_CAPPED", original=len(suspicious), capped_to=cfg.limits.max_batch_size)
         suspicious = suspicious[: cfg.limits.max_batch_size]
 
+    rep_by_ip: dict[str, dict] = {}
+    if cfg.host_role == "caddy":
+        lines_by_ip: dict[str, list[dict]] = {}
+        for s in suspicious:
+            lines_by_ip.setdefault(s.get("client_ip", "?"), []).append(s)
+        for ip_, lines in lines_by_ip.items():
+            rep_by_ip[ip_] = {
+                "target_site": _modal_first_seen(ln.get("target_site") for ln in lines),
+                "target_path": _modal_first_seen(ln.get("target_path") for ln in lines),
+                "method":      _modal_first_seen(ln.get("method")      for ln in lines),
+                "status":      _modal_first_seen(ln.get("status")      for ln in lines),
+                "ua_family":   _modal_first_seen(ln.get("ua_family")   for ln in lines),
+            }
+
     shadow_provider = None
     if cfg.shadow.enabled and 0 <= cfg.shadow.provider_index < len(cfg.providers):
         shadow_provider = cfg.providers[cfg.shadow.provider_index]
@@ -172,6 +204,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
         reason = item.get("reason", "")
         country = geoip.lookup_country(ip)
 
+        rep = rep_by_ip.get(ip, {})
         log.emit(
             "ANALYSIS",
             host_role=cfg.host_role,
@@ -182,6 +215,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
             ban_recommended=ban_recommended,
             reason=reason,
             mode=mode,
+            **rep,
         )
 
         if ban_recommended and mode == "enforce" and cfg.action is not None:
@@ -205,6 +239,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
                     classification=classification,
                     reason=reason,
                     action=cfg.action.name,
+                    **rep,
                 )
             else:
                 log.error("BAN_FAILED", ip=ip, action=cfg.action.name)
