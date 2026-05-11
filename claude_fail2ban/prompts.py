@@ -9,49 +9,108 @@
 # (the EventON plugin's calendar AJAX). Also broad threat-tier inflation
 # (low→medium 48, none→low 38, high→critical 33). Carve out the admin-ajax
 # false-positive class and soften the "always pick higher" rule.
+# v3 (2026-05-09→11 data): v2 carve-out is being applied too permissively;
+# Qwen now under-bans 62/722 (8.6%) vs Anthropic-as-ground-truth. Failure
+# shapes:
+#   - 25× bot_scraping→legitimate: foreign IPs (Vietnam/Nigeria/Brazil/Iraq)
+#     hitting admin-ajax with a valid nonce, excused as "normal plugin activity"
+#     despite obvious geographic mismatch on UK-targeted sites and coordinated
+#     multi-country activity on the same plugin action.
+#   -  7× exploitation_attempt→legitimate: same admin-ajax pattern + sensitive
+#     plugin actions (eventon_ics_download); also xmlrpc.php POST floods
+#     trusted because UA claims "Jetpack".
+#   - 11× single wp-login.php probes from non-UK IPs dismissed as "low-
+#     confidence, single request, plausible browser UA does not yet justify a
+#     ban".
+#   -  4× credential_stuffing→legitimate, including hallucinated rationale
+#     ("Google-Read-Aloud is a legitimate Google crawler accessing public
+#     login pages for accessibility indexing" -- not a real thing).
+# Add geographic anomaly as a primary signal (deployment is UK-only); tighten
+# the admin-ajax carve-out so geographic mismatch and coordinated multi-IP
+# patterns override it; extend the wp-login POST rule to xmlrpc; explicitly
+# reject crawler-on-auth-endpoint exoneration; treat a single probe of a clear
+# attack path as sufficient evidence to ban.
 QWEN_CALIBRATION = """\
 
 CALIBRATION (specific to this deployment):
 
 1. **Endpoint identity outranks User-Agent.** Requests to /wp-login.php, \
-/xmlrpc.php, /.env, /.git/, /phpMyAdmin, or similar attack paths are malicious \
-by default. A plausible User-Agent (Chrome, Firefox, "Bingbot") does NOT \
-exonerate -- User-Agent strings are trivially spoofed and routinely spoofed by \
-attackers.
+/xmlrpc.php, /.env, /.git/, /phpMyAdmin, /config.php, /wp-admin/setup-config.php, \
+or similar attack paths are malicious by default. A plausible User-Agent \
+(Chrome, Firefox, "Bingbot", "Google-Read-Aloud", "Jetpack", "WordPress.com") \
+does NOT exonerate -- User-Agent strings are trivially spoofed and routinely \
+spoofed by attackers. Real Googlebot/Bingbot does NOT crawl wp-login.php, \
+xmlrpc.php, or admin endpoints; a UA claiming to be a search-engine crawler \
+on those paths is spoofed by definition, regardless of how plausible the \
+rationale sounds.
 
-2. **/wp-admin/admin-ajax.php is dual-use, judge by method and nonce.** A GET \
-to admin-ajax.php carrying a `nonce=` query parameter and a real browser UA is \
-normal WordPress plugin activity (the EventON calendar plugin makes these \
-requests on every page load). Classify as "legitimate" or at most "low" \
-bot_scraping. Treat admin-ajax.php as an attack endpoint only when: the method \
-is POST, OR the nonce is missing, OR the request comes from a scanner UA, OR \
-the IP also hits other attack paths.
+2. **This deployment is UK-targeted.** Hosts include running clubs, livery \
+yards, and other small-business / personal sites with overwhelmingly UK \
+audiences. A non-UK source IP hitting WordPress auth surfaces, admin \
+endpoints, or sensitive plugin actions is presumptively suspicious. \
+Geographic mismatch by itself is enough to push the verdict up one tier on \
+any attack path, and is sufficient context to ban on a single hit to \
+wp-login.php / xmlrpc.php / .env / .git / phpMyAdmin / config.php / similar \
+(see rule 6). Treat the `country` field on each entry as a primary signal, \
+not flavour text.
 
-3. **HTTP 200 on an attack endpoint means the attack worked, not that the \
-traffic is normal.** A 200 response to a POST on /wp-login.php, or to /.env, \
-/xmlrpc.php, /.git/config, etc., is the worst outcome -- it confirms the \
-endpoint is reachable and the probe succeeded. Classify "critical" and ban. \
-This rule does NOT apply to admin-ajax.php with a valid nonce (rule 2).
+3. **/wp-admin/admin-ajax.php is dual-use; the carve-out is narrow.** A GET \
+with a valid `nonce=` and a browser UA from a plausible UK IP, on a public \
+plugin action, is normal WordPress activity (e.g. EventON calendar). \
+Classify as "legitimate" or at most "low" bot_scraping. The carve-out does \
+NOT apply when ANY of these hold:
+   - source IP is non-UK (geographic anomaly), OR
+   - multiple IPs from different countries perform the same plugin action \
+within a short window (coordinated scraping campaign), OR
+   - the action exposes data not meant for anonymous extraction \
+(`eventon_ics_download`, bulk-export endpoints, member lists), OR
+   - the method is POST, OR the nonce is missing, OR the request comes from \
+a scanner UA, OR the IP also hits other attack paths.
+In any of those cases, classify as bot_scraping (medium) or higher and ban.
 
-4. **POSTs to /wp-login.php are brute_force or credential_stuffing, period.** \
-This deployment hosts no WordPress login that legitimately accepts auth from \
-arbitrary remote IPs. Any such POST is threat "high" or "critical", ban.
+4. **HTTP 200 on an attack endpoint means the attack worked.** A 200 response \
+to /.env, /.git/config, /config.php, /wp-login.php POST, /xmlrpc.php POST, \
+etc., confirms the endpoint is reachable and the probe succeeded. Classify \
+"critical" and ban. This does NOT apply to admin-ajax.php with a valid nonce \
+on a UK IP (rule 3).
 
-5. **Do not down-tier on weak grounds.** "Single request" or "standard browser \
-User-Agent" alone are NOT reasons to drop a verdict from medium to low or low \
-to none on a clear attack path. The on-wire behaviour (path, method, payload) \
-is what counts.
+5. **POSTs to /wp-login.php OR /xmlrpc.php are always attacks.** This \
+deployment hosts no WordPress login or XML-RPC endpoint that legitimately \
+accepts auth or RPC from arbitrary remote IPs. POST to either = brute_force, \
+credential_stuffing, or exploitation_attempt; threat "high" or "critical", \
+ban. The User-Agent does not matter -- "Jetpack", "WordPress.com", \
+"WordPress/x.y", real-looking browsers, all routinely spoofed. Volume \
+amplifies but is not required: even a single POST from a non-UK IP is enough.
 
-6. **Reserve "legitimate" for known-good crawlers** (Googlebot, Bingbot, \
-Baiduspider, Applebot, SemrushBot, PetalBot, Amazonbot) hitting public \
-endpoints only, AND for normal WordPress plugin traffic (rule 2). For \
-ambiguous traffic on non-attack paths, use "unknown" rather than "legitimate".
+6. **A single probe is enough on clear attack paths.** /wp-login.php, \
+/xmlrpc.php, /.env, /.git/, /phpMyAdmin, /config.php, /wp-admin/setup-config.php, \
+known-vulnerable plugin paths -- a single GET or HEAD from a non-UK IP is \
+sufficient for "medium" threat and ban. Do NOT require POST, repeated \
+attempts, follow-up paths, a scanner UA, or evidence of successful \
+exploitation. The reasoning "single request, plausible browser UA, no \
+further escalation observed" is a calibration failure on these endpoints.
+
+7. **Do not down-tier on weak grounds.** "Single request", "standard browser \
+User-Agent", "no successful exploitation observed", "returned 403/404", \
+"plugin endpoint with valid nonce" alone are NOT reasons to drop a verdict \
+from medium to low or low to none on a clear attack path or when geographic \
+mismatch is present. The on-wire behaviour (path, method, source country) is \
+what counts.
+
+8. **Reserve "legitimate" tightly.** Known-good crawlers (Googlebot, Bingbot, \
+Baiduspider, Applebot, SemrushBot, PetalBot, Amazonbot) hitting genuinely \
+public pages, AND normal WordPress plugin traffic from UK IPs that satisfies \
+rule 3. Do NOT invent novel rationales for why a crawler might be hitting \
+auth, admin, or sensitive-plugin endpoints -- if you find yourself \
+constructing such a rationale, the UA is spoofed. For ambiguous traffic on \
+non-attack paths, use "unknown" rather than "legitimate".
 
 When evidence is mixed, pick the higher threat level for clear attack paths \
-(admin login, .env, .git, xmlrpc, traversal, injection). For ambiguous traffic \
-on common endpoints, pick the lower threat level -- false positives erode \
-trust in the system. Threat-tier inflation (none→low, low→medium) on benign \
-crawler or plugin traffic is a calibration failure.
+(admin login, .env, .git, xmlrpc, traversal, injection) or when geographic \
+mismatch is present. For ambiguous traffic on non-attack paths from plausible \
+UK IPs, pick the lower threat level -- false positives erode trust. \
+Threat-tier inflation (none→low, low→medium) on UK-source crawler or plugin \
+traffic on public endpoints remains a calibration failure.
 """
 
 CALIBRATIONS = {
