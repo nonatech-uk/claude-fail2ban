@@ -28,6 +28,11 @@ model = "qwen3.6:35b-a3b"
 think = false
 timeout_seconds = 90
 tls_verify = false
+# Appends prompts.CALIBRATIONS[<key>] to the system prompt for this provider
+# only. "caddy_v1" counters the under-tiering observed during phase 1.5
+# shadow validation (UA-fallacy, 200-on-attack-path read as benign, soft
+# wp-login/xmlrpc verdicts). Omit or set to "" to disable.
+calibration = "caddy_v1"
 
 [limits]
 max_bans_per_run = 10

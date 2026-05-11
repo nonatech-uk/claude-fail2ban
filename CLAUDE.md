@@ -12,13 +12,12 @@ A multi-host log analyser. Each host runs `python -m claude_fail2ban` every 15 m
   - `cli.py` — argparse + orchestration loop
   - `analyzer.py` — provider chain walker + shadow-mode comparison
   - `config.py` — TOML loader, builds source/action/provider instances
-  - `prompts.py` — single shared `SYSTEM_PROMPT`
+  - `prompts.py` — shared `SYSTEM_PROMPT` plus a `CALIBRATIONS` dict of suffix strings selectable per provider via `calibration = "<key>"` in `config.toml` (currently `caddy_v1`, counters Qwen under-tiering observed during phase 1.5).
   - `log.py` — JSON-line stdout logger (NOT Python `logging`); always write events with `log.emit("EVENT_NAME", **fields)`
   - `state.py`, `geoip.py`, `whitelist.py`, `health.py`, `email_alert.py`, `digest.py` — leaf utilities
-  - `patterns.py` — shared suspicion regex (`BAD_PATH_PATTERNS`, `SUSPICIOUS_STATUSES`, `SUSPICIOUS_METHODS`). Both nginx-flavoured sources import from here.
-  - `sources/` — `Source` ABC + `caddy_json.py`, `mailcow_docker.py` (postfix/dovecot/rspamd via `docker logs --since`), `mailcow_nginx.py`. The shared `_docker_logs.py` helper handles cursor management.
-  - `actions/` — `Action` ABC + `fail2ban_client.py`, `mailcow_api.py`.
-  - `providers/` — `LLMProvider` ABC + `anthropic_provider.py`, `ollama_openai.py`, `ollama_native.py`.
+  - `sources/` — `Source` ABC + `caddy_json.py` (BAD_PATH / SUSPICIOUS_* regex are inlined here).
+  - `actions/` — `Action` ABC + `fail2ban_client.py`.
+  - `providers/` — `LLMProvider` ABC + `anthropic_provider.py`, `ollama_openai.py`, `ollama_native.py` (the last accepts `prompt_suffix` to append a calibration block to the system prompt).
 - `systemd/` — units copied to `/etc/systemd/system/` by `install.sh`
 - `examples/` — per-role `config.*.toml` templates
 - `install.sh` — idempotent installer; safe to re-run
@@ -67,14 +66,14 @@ There's no formal test suite yet. Validation flow:
 | 1.5 | Shadow-mode validation: run Qwen alongside Anthropic for ~3 days, compare verdicts | Done on mees-app-server, baking |
 | 2 | GitHub repo + per-host config via fleet-sync | In progress (this repo) |
 | 3 | Roll out to albury-app-server | Pending |
-| 4 | Mailcow source (`mailcow_docker.py`, `mailcow_nginx.py`) + ban backend (`mailcow_api.py`); roll out to mees-mail-server | In progress |
+| 4 | Mailcow source + ban backend; roll out to mees-mail-server | Reset — earlier scaffolding (`mailcow_docker.py`, `mailcow_nginx.py`, `mailcow_api.py`, shared `patterns.py`, `_docker_logs.py`) was never deployed and has been removed. Re-derive from the current caddy baseline. |
 | 5 | Roll out to albury-mail-server | Pending |
 | 6 | Central reporter — daily Loki-driven cross-host digest | Pending |
 
 ## Things that bit me last time
 
-- **Negative state offsets** crash `f.seek()`. `caddy_json.py` clamps; the docker-logs helper (`sources/_docker_logs.py`) clamps RFC3339 cursors the same way (negative / future / >24h-old all fall back to a 16-minute look-back).
-- **Mailcow docker logs are NOT in journald** on stock installs. The docker daemon uses the `json-file` log driver, so `journalctl _SYSTEMD_UNIT=mailcowdockerized-…` is empty. `mailcow_docker.py` shells out to `docker logs --since=<rfc3339>` instead. If a future host changes the daemon log driver to journald, that's the time to write a sibling source.
+- **Negative state offsets** crash `f.seek()`. `caddy_json.py` clamps; any future RFC3339-cursor-based source should clamp the same way (negative / future / >24h-old all fall back to a ~16-minute look-back).
+- **Mailcow docker logs are NOT in journald** on stock installs. The docker daemon uses the `json-file` log driver, so `journalctl _SYSTEMD_UNIT=mailcowdockerized-…` is empty. When Phase 4 is rebuilt, the mailcow source will need to shell out to `docker logs --since=<rfc3339>` instead. If a future host changes the daemon log driver to journald, that's the time to write a sibling source.
 - **Reasoning models eat tokens silently.** Qwen3 family generates a `reasoning` field on Ollama's OpenAI-compat endpoint that doesn't count as `completion_tokens` but blocks for 30+ seconds. Use the native `/api/chat` endpoint with `think: false` (`ollama_native.py`).
 - **fleet-sync clobbers file modes.** Any per-host config delivered via fleet-sync needs `chmod 0644` in the manifest's `reload:` line. See `feedback_fleet_sync_perms` in memory.
 - **`/opt/caddy-claude-analysis/` is the OLD deployment.** Read it for reference if you need to compare behaviour, but don't edit it. Once Phase 1.5 is signed off, archive it.
