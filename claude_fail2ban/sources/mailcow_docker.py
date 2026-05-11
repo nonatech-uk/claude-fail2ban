@@ -11,8 +11,11 @@ A future host using the `journald` log driver can add a sibling source.
 
 Simplified entries use the gold-standard target_site / target_path naming
 that caddy_json emits — for mail flows the target is the recipient mailbox,
-so target_site = recipient domain and target_path = local-part. That keeps
-the downstream rep_by_ip / digest rendering uniform across web and mail.
+so target_site = recipient domain and target_path = local-part. When no
+recipient can be extracted (e.g. postscreen DNSBL lines, generic auth
+failures without a user= token) both fields are None and log.emit drops
+them from the JSON line. target_proto is set per flavour: smtp for
+postfix/rspamd (rspamd runs inline with the SMTP flow), imap for dovecot.
 """
 
 from __future__ import annotations
@@ -77,6 +80,15 @@ _FLAVOURS = {
     "postfix":  (_POSTFIX_INTERESTING, _BRACKET_IP),
     "dovecot":  (_DOVECOT_INTERESTING, _RIP),
     "rspamd":   (_RSPAMD_INTERESTING, re.compile(r"\bip:\s*([0-9a-fA-F:.]+)")),
+}
+
+# Wire protocol the flavour speaks. Emitted so the central reporter doesn't
+# have to derive proto from host_role (which loses the nginx-vs-mail-flow
+# distinction on multi-service mailcow hosts).
+_PROTO_BY_FLAVOUR = {
+    "postfix": "smtp",
+    "dovecot": "imap",
+    "rspamd":  "smtp",
 }
 
 # Address parts: local@domain. Loose enough for common forms, tight enough
@@ -160,17 +172,21 @@ class MailcowDockerSource(Source):
             "container": self.container,
             "target_site": target_site,
             "target_path": target_path,
+            "target_proto": _PROTO_BY_FLAVOUR[self.flavour],
             "message": body[:400],
         }
 
 
-def _extract_target(flavour: str, raw: str) -> tuple[str, str]:
+def _extract_target(flavour: str, raw: str) -> tuple[str | None, str | None]:
     """Return (target_site, target_path) for a mail-flow log line.
 
     For mail traffic the target is the recipient mailbox: local@domain →
-    site=domain, path=local. If no recipient can be extracted or the value
-    doesn't parse as a real address, both fall back to "unknown" so the
-    digest never shows an empty / placeholder target.
+    site=domain, path=local. If no recipient can be extracted (postscreen
+    DNSBL lines, generic auth failures without a user= token, etc.) or the
+    value doesn't parse as a real address, both fields fall back to None
+    and log.emit drops them from the JSON line. The digest renderer in
+    cli._format_target collapses the absent pair to a single "unknown"
+    placeholder for display.
     """
     for pat in _FLAVOUR_RCPT_RES.get(flavour, ()):
         m = pat.search(raw)
@@ -181,7 +197,7 @@ def _extract_target(flavour: str, raw: str) -> tuple[str, str]:
             continue
         local, _, domain = addr.rpartition("@")
         return domain, local
-    return "unknown", "unknown"
+    return None, None
 
 
 def _extract_ip(raw: str, ip_re: re.Pattern[str]) -> str:

@@ -141,6 +141,7 @@ class CaddyJsonSource(Source):
             "user_agent": user_agent,
             "target_site": target_site,
             "target_path": target_path,
+            "target_proto": "http",
             "ua_family": ua_family(user_agent),
         }
 

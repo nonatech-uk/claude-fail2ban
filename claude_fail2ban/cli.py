@@ -170,12 +170,13 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
             # nginx/web-only. `_modal_first_seen` returns None when no line
             # carries the field, so it's safe to collect the union.
             rep_by_ip[ip_] = {
-                "target_site": _modal_first_seen(ln.get("target_site") for ln in lines),
-                "target_path": _modal_first_seen(ln.get("target_path") for ln in lines),
-                "flavour":     _modal_first_seen(ln.get("flavour")     for ln in lines),
-                "method":      _modal_first_seen(ln.get("method")      for ln in lines),
-                "status":      _modal_first_seen(ln.get("status")      for ln in lines),
-                "ua_family":   _modal_first_seen(ln.get("ua_family")   for ln in lines),
+                "target_site":  _modal_first_seen(ln.get("target_site")  for ln in lines),
+                "target_path":  _modal_first_seen(ln.get("target_path")  for ln in lines),
+                "target_proto": _modal_first_seen(ln.get("target_proto") for ln in lines),
+                "flavour":      _modal_first_seen(ln.get("flavour")      for ln in lines),
+                "method":       _modal_first_seen(ln.get("method")       for ln in lines),
+                "status":       _modal_first_seen(ln.get("status")       for ln in lines),
+                "ua_family":    _modal_first_seen(ln.get("ua_family")    for ln in lines),
             }
 
     shadow_provider = None
@@ -277,8 +278,9 @@ def _format_target(entry: dict) -> str:
     Mail sources (postfix/dovecot/rspamd) carry a recipient mailbox split
     into local-part (target_path) and domain (target_site); render as
     `local@domain`. Web sources carry a vhost + path; render as
-    `site + path`. Either field may be "unknown" — if both are unknown the
-    target collapses to a single "unknown" rather than e.g. "unknown@unknown".
+    `site + path`. Either field may be absent (None) — when both are
+    absent the target collapses to a single "unknown" placeholder rather
+    than e.g. "unknown@unknown".
     """
     site = entry.get("target_site") or "unknown"
     path = entry.get("target_path") or "unknown"

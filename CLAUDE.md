@@ -66,7 +66,7 @@ There's no formal test suite yet. Validation flow:
 | 1.5 | Shadow-mode validation: run Qwen alongside Anthropic for ~3 days, compare verdicts | Done on mees-app-server, baking |
 | 2 | GitHub repo + per-host config via fleet-sync | In progress (this repo) |
 | 3 | Roll out to albury-app-server | Pending |
-| 4 | Mailcow source + ban backend; roll out to mees-mail-server | Re-derived on the gold-standard baseline (`mailcow_docker.py`, `mailcow_nginx.py`, `mailcow_api.py`, `_docker_logs.py`). Sources emit `target_site`/`target_path` to match `caddy_json.py`; `cli._run` builds a modal `rep_by_ip` for mailcow alongside caddy. Deployed on mees-mail-server. |
+| 4 | Mailcow source + ban backend; roll out to mees-mail-server | Re-derived on the gold-standard baseline (`mailcow_docker.py`, `mailcow_nginx.py`, `mailcow_api.py`, `_docker_logs.py`). Sources emit `target_site`/`target_path` as `None` when not derivable (matching `caddy_json.py`'s shape — `log.emit` drops `None` fields from JSON so central-site `IS NULL` checks work). All sources also emit `target_proto` (`http` for caddy + mailcow_nginx; `smtp` for postfix/rspamd; `imap` for dovecot) so the central reporter can trust the field instead of deriving proto from `host_role`. `cli._run` builds a modal `rep_by_ip` for mailcow alongside caddy. Deployed on mees-mail-server. |
 | 5 | Roll out to albury-mail-server | Pending |
 | 6 | Central reporter — daily Loki-driven cross-host digest | Pending |
 
