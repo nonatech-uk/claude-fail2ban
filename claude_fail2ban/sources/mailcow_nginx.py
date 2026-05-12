@@ -12,9 +12,10 @@ also means the LLM never sees the noise even if the whitelist drifts.
 
 Simplified entries follow the gold-standard shape from `caddy_json.py`:
 the legacy keys (`host`, `uri`, `method`, `status`, `user_agent`) plus the
-new `target_site`, `target_path`, `ua_family`. mailcow's nginx combined
-log doesn't carry the Host header, so `target_site` is best-effort from
-the Referer.
+new `target_site`, `target_path`, `target_proto`, `ua_family`. mailcow's
+nginx combined log doesn't carry the Host header, so `target_site` is
+best-effort from the Referer and may be absent (None) when no usable
+Referer is present. `target_proto` is always `"http"` for this source.
 """
 
 from __future__ import annotations
@@ -84,7 +85,7 @@ class MailcowNginxSource(Source):
         return False
 
     def simplify(self, entry: dict) -> dict:
-        uri = entry.get("uri") or "unknown"
+        uri = entry.get("uri") or None
         method = (entry.get("method") or "?").upper()
         status = entry.get("status", 0)
         ua = entry.get("user_agent", "")
@@ -99,7 +100,9 @@ class MailcowNginxSource(Source):
             "host": referer_site,
             "uri": uri,
             "target_site": referer_site,
-            "target_path": uri[:200],
+            "target_path": uri[:200] if uri else None,
+            "target_user": None,
+            "target_proto": "http",
             "status": status,
             "user_agent": ua,
             "ua_family": ua_family(ua),
@@ -107,18 +110,20 @@ class MailcowNginxSource(Source):
         }
 
 
-def _host_from_referer(referer: str) -> str:
+def _host_from_referer(referer: str) -> str | None:
     # Mailcow's nginx combined log doesn't capture the Host header, but the
     # Referer often points back at the same vhost the request was made to
     # (the panel making API calls, SOGo's own JS calls, etc.). Use it as a
-    # best-effort indicator of which mailcow hostname was targeted.
+    # best-effort indicator of which mailcow hostname was targeted. Returns
+    # None when no usable Referer host is present so log.emit drops the
+    # field from the JSON line (rather than emitting a literal "unknown").
     if not referer or referer == "-":
-        return "unknown"
+        return None
     try:
         host = urlparse(referer).hostname
     except ValueError:
-        return "unknown"
-    return host or "unknown"
+        return None
+    return host or None
 
 
 def _parse_combined(raw: str) -> dict | None:

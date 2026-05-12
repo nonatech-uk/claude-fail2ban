@@ -66,7 +66,7 @@ There's no formal test suite yet. Validation flow:
 | 1.5 | Shadow-mode validation: run Qwen alongside Anthropic for ~3 days, compare verdicts | Done on mees-app-server, baking |
 | 2 | GitHub repo + per-host config via fleet-sync | In progress (this repo) |
 | 3 | Roll out to albury-app-server | Pending |
-| 4 | Mailcow source + ban backend; roll out to mees-mail-server | Re-derived on the gold-standard baseline (`mailcow_docker.py`, `mailcow_nginx.py`, `mailcow_api.py`, `_docker_logs.py`). Sources emit `target_site`/`target_path` to match `caddy_json.py`; `cli._run` builds a modal `rep_by_ip` for mailcow alongside caddy. Deployed on mees-mail-server. |
+| 4 | Mailcow source + ban backend; roll out to mees-mail-server | Re-derived on the gold-standard baseline (`mailcow_docker.py`, `mailcow_nginx.py`, `mailcow_api.py`, `_docker_logs.py`). Sources emit `target_site`/`target_path`/`target_user` as `None` when not derivable. All sources also emit `target_proto` (`http` for caddy + mailcow_nginx; `smtp` for postfix/rspamd; `imap` for dovecot) so the central reporter can trust the field instead of deriving proto from `host_role`. `target_user` carries the attempted login on SASL/IMAP auth-failure lines (`sasl_username=` for postfix, `user=` for dovecot) and is `null` elsewhere. `cli._run` builds a modal `rep_by_ip` for mailcow alongside caddy. `ANALYSIS`/`BANNED` events use `log.emit(..., preserve_nulls=True, **rep)` so every `target_*` key appears with explicit JSON `null` when absent (schema parity required by the central pipeline). Deployed on mees-mail-server. |
 | 5 | Roll out to albury-mail-server | Pending |
 | 6 | Central reporter — daily Loki-driven cross-host digest | Pending |
 
