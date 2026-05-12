@@ -101,6 +101,7 @@ class MailcowNginxSource(Source):
             "uri": uri,
             "target_site": referer_site,
             "target_path": uri[:200] if uri else None,
+            "target_user": None,
             "target_proto": "http",
             "status": status,
             "user_agent": ua,

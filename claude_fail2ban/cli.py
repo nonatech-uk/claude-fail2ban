@@ -172,6 +172,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
             rep_by_ip[ip_] = {
                 "target_site":  _modal_first_seen(ln.get("target_site")  for ln in lines),
                 "target_path":  _modal_first_seen(ln.get("target_path")  for ln in lines),
+                "target_user":  _modal_first_seen(ln.get("target_user")  for ln in lines),
                 "target_proto": _modal_first_seen(ln.get("target_proto") for ln in lines),
                 "flavour":      _modal_first_seen(ln.get("flavour")      for ln in lines),
                 "method":       _modal_first_seen(ln.get("method")       for ln in lines),
@@ -212,6 +213,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
         rep = rep_by_ip.get(ip, {})
         log.emit(
             "ANALYSIS",
+            preserve_nulls=True,
             host_role=cfg.host_role,
             ip=ip,
             country=country,
@@ -237,6 +239,7 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
                 banned_ips.add(ip)
                 log.emit(
                     "BANNED",
+                    preserve_nulls=True,
                     host_role=cfg.host_role,
                     ip=ip,
                     country=country,

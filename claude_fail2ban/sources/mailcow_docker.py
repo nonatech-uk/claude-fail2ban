@@ -13,9 +13,13 @@ Simplified entries use the gold-standard target_site / target_path naming
 that caddy_json emits — for mail flows the target is the recipient mailbox,
 so target_site = recipient domain and target_path = local-part. When no
 recipient can be extracted (e.g. postscreen DNSBL lines, generic auth
-failures without a user= token) both fields are None and log.emit drops
-them from the JSON line. target_proto is set per flavour: smtp for
-postfix/rspamd (rspamd runs inline with the SMTP flow), imap for dovecot.
+failures without a user= token) both fields are None. target_proto is set
+per flavour: smtp for postfix/rspamd (rspamd runs inline with the SMTP
+flow), imap for dovecot.
+
+target_user carries the *attempted login* on auth-failure lines:
+sasl_username= for postfix SASL, user= for dovecot. It's null on rspamd
+and on postfix lines that aren't SASL failures (postscreen / NOQUEUE).
 """
 
 from __future__ import annotations
@@ -123,6 +127,27 @@ _FLAVOUR_RCPT_RES = {
     "rspamd":  _RSPAMD_RCPT_RES,
 }
 
+# Per-flavour attempted-login extractors for auth-failure lines.
+#   postfix SASL: `..., sasl_username=stu@mees.st` (or bare `sasl_username=stu`
+#     with no domain — still a real login attempt).
+#   dovecot: `user=<foo@bar>` or `user=<foo>`; the same token is also used as
+#     the recipient on dovecot lines, but conceptually it's the attempted
+#     login, so it populates target_user too.
+# Returns None when no token is present (postscreen DNSBL, NOQUEUE reject,
+# rspamd lines, dovecot `user=<>` aborted logins).
+_POSTFIX_USER_RES = (
+    re.compile(r"\bsasl_username=([^\s,]+)"),
+)
+_DOVECOT_USER_RES = (
+    re.compile(r"\buser=<([^<>]+)>"),
+    re.compile(r"\buser=([^,\s<>]+)"),
+)
+_FLAVOUR_USER_RES = {
+    "postfix": _POSTFIX_USER_RES,
+    "dovecot": _DOVECOT_USER_RES,
+    "rspamd":  (),
+}
+
 
 class MailcowDockerSource(Source):
     """One instance per (container, flavour) pair."""
@@ -165,6 +190,7 @@ class MailcowDockerSource(Source):
         # container hostname/pid noise.
         body = _trim_syslog_header(raw)
         target_site, target_path = _extract_target(self.flavour, raw)
+        target_user = _extract_user(self.flavour, raw)
         return {
             "ts": entry.get("ts", ""),
             "client_ip": ip,
@@ -172,6 +198,7 @@ class MailcowDockerSource(Source):
             "container": self.container,
             "target_site": target_site,
             "target_path": target_path,
+            "target_user": target_user,
             "target_proto": _PROTO_BY_FLAVOUR[self.flavour],
             "message": body[:400],
         }
@@ -198,6 +225,25 @@ def _extract_target(flavour: str, raw: str) -> tuple[str | None, str | None]:
         local, _, domain = addr.rpartition("@")
         return domain, local
     return None, None
+
+
+def _extract_user(flavour: str, raw: str) -> str | None:
+    """Return the attempted-login token from an auth-failure line, or None.
+
+    For postfix this is the SASL username on failed auth (`sasl_username=…`);
+    for dovecot it's the `user=…` token on the failure line. Empty captures
+    (e.g. dovecot `user=<>` on aborted logins) collapse to None so they
+    don't pollute the field with empty strings.
+    """
+    for pat in _FLAVOUR_USER_RES.get(flavour, ()):
+        m = pat.search(raw)
+        if not m:
+            continue
+        value = m.group(1).strip().rstrip(".,;:>").lower()
+        if not value:
+            continue
+        return value
+    return None
 
 
 def _extract_ip(raw: str, ip_re: re.Pattern[str]) -> str:
