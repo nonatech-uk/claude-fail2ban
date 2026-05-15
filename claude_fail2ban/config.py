@@ -59,6 +59,20 @@ class Shadow:
 
 
 @dataclass
+class Exemptions:
+    """Per-host carve-outs that skip suspicious entries before the LLM sees them.
+
+    `login_domains` is the list of mail domains whose attempted-login tokens
+    (postfix sasl_username= / dovecot user=) should be treated as legitimate
+    user activity. Auth-failure lines whose `target_user` parses as
+    local@domain with domain in this list are dropped from the suspicious
+    batch so a real user fat-fingering their password doesn't ban their own
+    dynamic ISP IP.
+    """
+    login_domains: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     host_role: str = "caddy"
     mode: str = "warn"
@@ -69,6 +83,7 @@ class Config:
     digest: Digest = field(default_factory=Digest)
     paths: Paths = field(default_factory=Paths)
     shadow: Shadow = field(default_factory=Shadow)
+    exemptions: Exemptions = field(default_factory=Exemptions)
 
 
 def load(path: Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -113,6 +128,11 @@ def load(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     cfg.shadow = Shadow(
         enabled=bool(shadow.get("enabled", False)),
         provider_index=int(shadow.get("provider_index", 1)),
+    )
+
+    exemptions = raw.get("exemptions", {})
+    cfg.exemptions = Exemptions(
+        login_domains=[str(d).strip().lower() for d in exemptions.get("login_domains", []) if str(d).strip()],
     )
     return cfg
 

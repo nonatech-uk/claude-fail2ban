@@ -135,6 +135,8 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
         health.ping()
         return 0
 
+    exempt_domains = set(cfg.exemptions.login_domains)
+    exempt_skipped = 0
     suspicious: list[dict] = []
     for source, entry in raw_entries:
         ip = source.simplify(entry).get("client_ip", "unknown")
@@ -146,9 +148,18 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
             continue
         item = source.simplify(entry)
         item["_source"] = source.name
+        if exempt_domains and _is_exempt_login(item, exempt_domains):
+            exempt_skipped += 1
+            log.emit(
+                "EXEMPT_LOGIN",
+                ip=ip,
+                target_user=item.get("target_user"),
+                source=source.name,
+            )
+            continue
         suspicious.append(item)
 
-    log.emit("FILTERED", suspicious=len(suspicious), raw=len(raw_entries))
+    log.emit("FILTERED", suspicious=len(suspicious), raw=len(raw_entries), exempt_skipped=exempt_skipped)
 
     if not suspicious:
         state.save(st, cfg.paths.state_file)
@@ -273,6 +284,22 @@ def _run(cfg: cfgmod.Config, mode: str) -> int:
     )
     health.ping()
     return 0
+
+
+def _is_exempt_login(item: dict, exempt_domains: set[str]) -> bool:
+    """True when the attempted login belongs to an exempt mail domain.
+
+    Skips auth-failure lines where target_user is `local@domain` and `domain`
+    is configured under `[exemptions] login_domains`. Used to keep claude-
+    fail2ban from banning a real mailbox owner's dynamic ISP IP after a
+    handful of password fat-fingers. Strong passwords + 2FA on the exempt
+    domain are the assumption.
+    """
+    user = item.get("target_user")
+    if not user or "@" not in user:
+        return False
+    domain = user.rsplit("@", 1)[1].strip().lower()
+    return domain in exempt_domains
 
 
 def _format_target(entry: dict) -> str:

@@ -65,3 +65,11 @@ whitelist_file = "/etc/claude-fail2ban/whitelist.txt"
 [shadow]
 enabled = true
 provider_index = 1
+
+[exemptions]
+# Mail domains whose attempted-login tokens (postfix sasl_username= /
+# dovecot user=) should be treated as legitimate user activity. Auth
+# failures targeting these domains never reach the LLM, so a real user
+# fat-fingering their password won't ban their own dynamic ISP IP.
+# Only safe to list domains with strong passwords + 2FA enforced.
+# login_domains = ["example.org"]
